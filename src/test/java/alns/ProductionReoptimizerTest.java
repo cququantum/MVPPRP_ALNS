@@ -18,6 +18,7 @@ public final class ProductionReoptimizerTest extends TestCase {
 
         ProductionReoptimizer.Result prod = new ProductionReoptimizer().optimize(ins, solution, 5.0);
         assertTrue(prod.feasible);
+        assertTrue(prod.status.startsWith("Optimal"));
         solution.setProductionPlan(prod);
         assertTrue(evaluator.evaluateFull(ins, solution).feasible);
         assertTrue(solution.objective > 0.0);

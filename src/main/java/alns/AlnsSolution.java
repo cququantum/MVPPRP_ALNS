@@ -129,6 +129,7 @@ public final class AlnsSolution {
         if (routeIdx >= 0) {
             Route route = routes[period].get(routeIdx);
             route.customers.remove(Integer.valueOf(customer));
+            route.load = Math.max(0.0, route.load - Math.max(0.0, q[customer][period]));
             if (route.customers.isEmpty()) {
                 routes[period].remove(routeIdx);
             }
@@ -136,15 +137,22 @@ public final class AlnsSolution {
     }
 
     public void insertVisitAt(int customer, int period, int routeIdx, int position) {
+        insertVisitAt(customer, period, routeIdx, position, Math.max(0.0, q[customer][period]));
+    }
+
+    public void insertVisitAt(int customer, int period, int routeIdx, int position, double demand) {
         z[customer][period] = true;
+        q[customer][period] = demand;
         if (routeIdx == routes[period].size()) {
             Route route = new Route();
             route.customers.add(customer);
+            route.load = demand;
             routes[period].add(route);
             return;
         }
         Route route = routes[period].get(routeIdx);
         route.customers.add(position, customer);
+        route.load += demand;
     }
 
     public void setProductionPlan(ProductionReoptimizer.Result r) {

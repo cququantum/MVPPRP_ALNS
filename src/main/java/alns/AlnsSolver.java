@@ -295,9 +295,6 @@ public final class AlnsSolver {
         ArrayList<Visit> visits = collectVisits(solution, ins);
         Collections.shuffle(visits, random);
         for (Visit visit : visits) {
-            if (solution.countVisitsForCustomer(ins, visit.customer) <= 1) {
-                continue;
-            }
             for (int targetPeriod = 1; targetPeriod <= ins.l; targetPeriod++) {
                 if (targetPeriod == visit.period || solution.z[visit.customer][targetPeriod]) {
                     continue;
@@ -309,7 +306,7 @@ public final class AlnsSolver {
                 if (insertion == null) {
                     continue;
                 }
-                candidate.insertVisitAt(visit.customer, targetPeriod, insertion.routeIdx, insertion.position);
+                candidate.insertVisitAt(visit.customer, targetPeriod, insertion.routeIdx, insertion.position, demand);
                 if (!runProduction(candidate, ins, deadlineNs)) {
                     continue;
                 }
@@ -511,51 +508,12 @@ public final class AlnsSolver {
             if (!ctx.destroyedPeriods[t]) {
                 continue;
             }
-            int additions = 0;
-            boolean added;
-            do {
-                added = false;
-                ArrayList<Integer> critical = new ArrayList<Integer>();
-                for (int i = 1; i <= ins.n; i++) {
-                    if (solution.z[i][t]) {
-                        continue;
-                    }
-                    int prev = solution.previousVisit(i, t);
-                    if (ins.mu[i][prev] == t) {
-                        critical.add(Integer.valueOf(i));
-                    }
-                }
-                final int rebuildPeriod = t;
-                Collections.sort(critical, new Comparator<Integer>() {
-                    @Override
-                    public int compare(Integer a, Integer b) {
-                        double qa = ins.g(a.intValue(), solution.previousVisit(a.intValue(), rebuildPeriod), rebuildPeriod);
-                        double qb = ins.g(b.intValue(), solution.previousVisit(b.intValue(), rebuildPeriod), rebuildPeriod);
-                        return Double.compare(qb, qa);
-                    }
-                });
-                for (Integer customer : critical) {
-                    double demand = ins.g(customer.intValue(), solution.previousVisit(customer.intValue(), t), t);
-                    RoutingHeuristics.Insertion insertion = RoutingHeuristics.findBestInsertion(ins, solution, customer.intValue(), t, demand);
-                    if (insertion != null) {
-                        solution.insertVisitAt(customer.intValue(), t, insertion.routeIdx, insertion.position);
-                        additions++;
-                        added = true;
-                        break;
-                    }
-                }
-                if (!added) {
-                    SolutionEvaluator.EvaluationResult structure = evaluator.evaluateStructure(ins, solution);
-                    if (structure.firstRawShortagePeriod >= 0 && structure.firstRawShortagePeriod >= t) {
-                        InsertionCandidate rawCandidate = bestCandidateForTask(ins, solution, new Task(TaskType.RAW, -1, t));
-                        if (rawCandidate != null) {
-                            solution.insertVisitAt(rawCandidate.customer, rawCandidate.period, rawCandidate.routeIdx, rawCandidate.position);
-                            additions++;
-                            added = true;
-                        }
-                    }
-                }
-            } while (added && additions < MAX_PERIOD_REBUILD_ADDITIONS);
+            if (!selectVisitsForDestroyedPeriod(ins, solution, t, deadlineNs)) {
+                return false;
+            }
+            if (!RoutingHeuristics.rebuildPeriodRoutes(ins, solution, t, evaluator)) {
+                return false;
+            }
         }
         return repairByTasks(ins, solution, deadlineNs, false);
     }
@@ -587,7 +545,13 @@ public final class AlnsSolver {
             if (chosen == null) {
                 return false;
             }
-            solution.insertVisitAt(chosen.customer, chosen.period, chosen.routeIdx, chosen.position);
+            solution.insertVisitAt(
+                    chosen.customer,
+                    chosen.period,
+                    chosen.routeIdx,
+                    chosen.position,
+                    insertionDemandForCurrentState(ins, solution, chosen.customer, chosen.period)
+            );
         }
         SolutionEvaluator.EvaluationResult structure = evaluator.evaluateStructure(ins, solution);
         return structure.structureFeasible && structure.firstRawShortagePeriod < 0;
@@ -670,7 +634,7 @@ public final class AlnsSolver {
                     continue;
                 }
                 AlnsSolution candidate = solution.deepCopy(ins);
-                candidate.insertVisitAt(customer, t, insertion.routeIdx, insertion.position);
+                candidate.insertVisitAt(customer, t, insertion.routeIdx, insertion.position, demand);
                 SolutionEvaluator.EvaluationResult eval = evaluator.evaluateStructure(ins, candidate);
                 if (!eval.structureFeasible) {
                     continue;
@@ -695,7 +659,7 @@ public final class AlnsSolver {
                         continue;
                     }
                     AlnsSolution candidate = solution.deepCopy(ins);
-                    candidate.insertVisitAt(customer, t, insertion.routeIdx, insertion.position);
+                    candidate.insertVisitAt(customer, t, insertion.routeIdx, insertion.position, demand);
                     SolutionEvaluator.EvaluationResult eval = evaluator.evaluateStructure(ins, candidate);
                     if (!eval.structureFeasible) {
                         continue;
@@ -722,6 +686,83 @@ public final class AlnsSolver {
             invEnd = solution.z[customer][t] ? 0.0 : before;
         }
         return -1;
+    }
+
+    private boolean selectVisitsForDestroyedPeriod(Instance ins, AlnsSolution solution, int t, long deadlineNs) {
+        int additions = 0;
+        while (additions < MAX_PERIOD_REBUILD_ADDITIONS && System.nanoTime() < deadlineNs) {
+            Integer criticalCustomer = bestCriticalCustomerForPeriod(ins, solution, t);
+            if (criticalCustomer != null) {
+                solution.z[criticalCustomer.intValue()][t] = true;
+                additions++;
+                continue;
+            }
+
+            SolutionEvaluator.EvaluationResult plan = evaluator.evaluatePlan(ins, solution);
+            if (plan.cumulativeRawAvailability[t] + SolutionEvaluator.EPS >= plan.requiredRawLowerBound[t]) {
+                return true;
+            }
+
+            Integer rawCustomer = bestRawGainCustomerForPeriod(ins, solution, t);
+            if (rawCustomer == null) {
+                return false;
+            }
+            solution.z[rawCustomer.intValue()][t] = true;
+            additions++;
+        }
+        return true;
+    }
+
+    private Integer bestCriticalCustomerForPeriod(Instance ins, AlnsSolution solution, int period) {
+        Integer best = null;
+        double bestDemand = -1.0;
+        for (int customer = 1; customer <= ins.n; customer++) {
+            if (solution.z[customer][period]) {
+                continue;
+            }
+            int prev = solution.previousVisit(customer, period);
+            if (ins.mu[customer][prev] != period) {
+                continue;
+            }
+            double demand = ins.g(customer, prev, period);
+            if (demand > ins.Q + SolutionEvaluator.EPS) {
+                continue;
+            }
+            if (demand > bestDemand + SolutionEvaluator.EPS) {
+                bestDemand = demand;
+                best = Integer.valueOf(customer);
+            }
+        }
+        return best;
+    }
+
+    private Integer bestRawGainCustomerForPeriod(Instance ins, AlnsSolution solution, int period) {
+        SolutionEvaluator.EvaluationResult base = evaluator.evaluatePlan(ins, solution);
+        Integer best = null;
+        double bestGain = SolutionEvaluator.EPS;
+        for (int customer = 1; customer <= ins.n; customer++) {
+            if (solution.z[customer][period]) {
+                continue;
+            }
+            int prev = solution.previousVisit(customer, period);
+            double demand = ins.g(customer, prev, period);
+            if (demand > ins.Q + SolutionEvaluator.EPS) {
+                continue;
+            }
+            AlnsSolution candidate = solution.deepCopy(ins);
+            candidate.z[customer][period] = true;
+            SolutionEvaluator.EvaluationResult eval = evaluator.evaluatePlan(ins, candidate);
+            double gain = eval.cumulativeRawAvailability[period] - base.cumulativeRawAvailability[period];
+            if (gain > bestGain) {
+                bestGain = gain;
+                best = Integer.valueOf(customer);
+            }
+        }
+        return best;
+    }
+
+    private double insertionDemandForCurrentState(Instance ins, AlnsSolution solution, int customer, int period) {
+        return ins.g(customer, solution.previousVisit(customer, period), period);
     }
 
     private ArrayList<Visit> collectVisits(AlnsSolution solution, Instance ins) {

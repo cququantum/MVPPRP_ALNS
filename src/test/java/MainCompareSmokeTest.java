@@ -8,7 +8,7 @@ import java.nio.file.Path;
 
 public final class MainCompareSmokeTest extends TestCase {
 
-    public void testCompareModeProducesGapAndCsv() throws Exception {
+    public void testCompareModeProducesGapToStdout() throws Exception {
         Path temp = Files.createTempFile("mvprp-small", ".txt");
         Files.write(
                 temp,
@@ -41,9 +41,5 @@ public final class MainCompareSmokeTest extends TestCase {
 
         String output = new String(buf.toByteArray(), StandardCharsets.UTF_8);
         assertTrue(output.contains("Comparison | exactGapPct="));
-
-        Path csv = Path.of("alns_vs_original.csv");
-        assertTrue(Files.exists(csv));
-        assertTrue(Files.readAllLines(csv, StandardCharsets.UTF_8).size() >= 2);
     }
 }

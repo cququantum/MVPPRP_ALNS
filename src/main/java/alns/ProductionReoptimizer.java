@@ -31,7 +31,7 @@ public final class ProductionReoptimizer {
 
     public Result optimize(Instance ins, AlnsSolution solution, double timeLimitSec) {
         try (IloCplex cplex = new IloCplex()) {
-            cplex.setParam(IloCplex.Param.TimeLimit, Math.max(0.05, Math.min(timeLimitSec, 5.0)));
+            cplex.setParam(IloCplex.Param.TimeLimit, Math.max(0.05, timeLimitSec));
             cplex.setParam(IloCplex.Param.MIP.Tolerances.MIPGap, CplexConfig.MIP_GAP);
             if (!CplexConfig.LOG_TO_CONSOLE) {
                 cplex.setOut(null);
@@ -91,8 +91,10 @@ public final class ProductionReoptimizer {
             }
 
             boolean solved = cplex.solve();
-            if (!solved) {
-                return new Result(false, cplex.getStatus().toString(), Double.NaN,
+            String status = cplex.getStatus().toString();
+            boolean optimal = solved && status.startsWith("Optimal");
+            if (!optimal) {
+                return new Result(false, status, Double.NaN,
                         new double[ins.l + 1], new double[ins.l + 1], new double[ins.l + 1], new double[ins.l + 1]);
             }
 
@@ -106,7 +108,7 @@ public final class ProductionReoptimizer {
                 p0Val[t] = cplex.getValue(p0[t]);
                 i0Val[t] = cplex.getValue(i0[t]);
             }
-            return new Result(true, cplex.getStatus().toString(), cplex.getObjValue(), yVal, pVal, p0Val, i0Val);
+            return new Result(true, status, cplex.getObjValue(), yVal, pVal, p0Val, i0Val);
         } catch (IloException e) {
             throw new RuntimeException("Failed to optimize production plan for ALNS", e);
         }
