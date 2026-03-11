@@ -9,7 +9,7 @@ public final class IncrementalEvaluatorTest extends TestCase {
         Instance ins = AlnsTestSupport.overflowInstance();
         AlnsSolution solution = new AlnsSolution(ins);
 
-        assertEquals(26.0, IncrementalEvaluator.supplierHoldingCostForCustomer(ins, solution.z[1], 1), 1e-6);
+        assertEquals(20.0, IncrementalEvaluator.supplierHoldingCostForCustomer(ins, solution.z[1], 1), 1e-6);
         assertEquals(2, IncrementalEvaluator.firstOverflowForCustomer(ins, solution.z[1], 1));
 
         solution.z[1][1] = true;

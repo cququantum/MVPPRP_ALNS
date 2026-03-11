@@ -149,6 +149,29 @@ public final class AlnsSolverTest extends TestCase {
         assertTrue(containsCandidateForPeriod(candidates, 1));
     }
 
+    public void testSameRouteSwapIsNotRejectedByCrossRouteCapacityCheck() throws Exception {
+        Instance ins = AlnsTestSupport.sameRouteSwapCapacityEdgeInstance();
+        AlnsSolution solution = new AlnsSolution(ins);
+        solution.insertVisitAt(1, 1, 0, 0);
+        solution.insertVisitAt(3, 1, 0, 1);
+        solution.insertVisitAt(2, 1, 0, 2);
+
+        SolutionEvaluator evaluator = new SolutionEvaluator();
+        evaluator.evaluateStructure(ins, solution);
+        double beforeCost = RoutingHeuristics.routeCost(ins, solution.routes[1].get(0));
+        double beforeLoad = solution.routes[1].get(0).load;
+
+        AlnsSolver solver = new AlnsSolver(AlnsConfig.defaults().withTimeLimitSec(1.0));
+        Method method = AlnsSolver.class.getDeclaredMethod("applyIntraPeriodSwap", Instance.class, AlnsSolution.class);
+        method.setAccessible(true);
+        boolean improved = ((Boolean) method.invoke(solver, ins, solution)).booleanValue();
+
+        assertTrue(improved);
+        assertEquals(3, solution.routes[1].get(0).customers.size());
+        assertEquals(beforeLoad, solution.routes[1].get(0).load, 1e-6);
+        assertTrue(RoutingHeuristics.routeCost(ins, solution.routes[1].get(0)) < beforeCost - SolutionEvaluator.EPS);
+    }
+
     private ArrayList<?> invokeCandidatesForTask(AlnsSolver solver, Instance ins, AlnsSolution solution,
                                                  String taskTypeName, int customer, int deadline) throws Exception {
         Class<?> taskTypeClass = Class.forName("alns.AlnsSolver$TaskType");

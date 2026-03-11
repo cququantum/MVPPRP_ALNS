@@ -23,10 +23,11 @@ public final class IncrementalEvaluator {
         double invEnd = ins.Ii0[customer];
         for (int t = 1; t <= ins.l; t++) {
             double before = invEnd + ins.s[customer][t];
+            double effectiveBefore = Math.min(before, ins.Li[customer]);
             if (zRow[t]) {
                 invEnd = 0.0;
             } else {
-                invEnd = before;
+                invEnd = effectiveBefore;
                 cost += ins.hi[customer] * invEnd;
             }
         }

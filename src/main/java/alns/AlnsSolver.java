@@ -263,10 +263,12 @@ public final class AlnsSolver {
                             }
                             int c1 = left.customers.get(p1).intValue();
                             int c2 = right.customers.get(p2).intValue();
-                            double newLeftLoad = left.load - solution.q[c1][t] + solution.q[c2][t];
-                            double newRightLoad = right.load - solution.q[c2][t] + solution.q[c1][t];
-                            if (newLeftLoad > ins.Q + SolutionEvaluator.EPS || newRightLoad > ins.Q + SolutionEvaluator.EPS) {
-                                continue;
+                            if (r1 != r2) {
+                                double newLeftLoad = left.load - solution.q[c1][t] + solution.q[c2][t];
+                                double newRightLoad = right.load - solution.q[c2][t] + solution.q[c1][t];
+                                if (newLeftLoad > ins.Q + SolutionEvaluator.EPS || newRightLoad > ins.Q + SolutionEvaluator.EPS) {
+                                    continue;
+                                }
                             }
                             double delta = IncrementalEvaluator.routingOnlySwapDelta(
                                     ins, solution, t, r1, p1, r2, p2);
