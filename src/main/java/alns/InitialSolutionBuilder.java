@@ -45,18 +45,25 @@ public final class InitialSolutionBuilder {
             while (state.cumulativeRawAvailability[t] + SolutionEvaluator.EPS < state.requiredRawLowerBound[t]) {
                 int bestCustomer = -1;
                 double bestGain = -1.0;
+                double currentPeriodLoad = state.periodLoads[t];
                 for (int i = 1; i <= ins.n; i++) {
                     if (solution.z[i][t]) {
                         continue;
                     }
-                    AlnsSolution candidate = solution.deepCopy(ins);
-                    candidate.z[i][t] = true;
-                    SolutionEvaluator.EvaluationResult candidateState = evaluator.evaluatePlan(ins, candidate);
-                    if (!prefixLoadsWithinFleet(ins, candidateState, t)
-                            || (candidateState.firstSupplierOverflowPeriod >= 0 && candidateState.firstSupplierOverflowPeriod <= t)) {
+                    int prev = solution.previousVisit(i, t);
+                    double demand = ins.g(i, prev, t);
+                    if (currentPeriodLoad + demand > ins.K * ins.Q + SolutionEvaluator.EPS) {
                         continue;
                     }
-                    double gain = candidateState.cumulativeRawAvailability[t] - state.cumulativeRawAvailability[t];
+
+                    solution.z[i][t] = true;
+                    int overflow = IncrementalEvaluator.firstOverflowForCustomer(ins, solution.z[i], i);
+                    solution.z[i][t] = false;
+                    if (overflow >= 0 && overflow <= t) {
+                        continue;
+                    }
+
+                    double gain = demand;
                     if (gain > bestGain + SolutionEvaluator.EPS) {
                         bestGain = gain;
                         bestCustomer = i;

@@ -75,14 +75,15 @@ public final class SolutionEvaluator {
                 if (beforePickup > ins.Li[i] + EPS && firstSupplierOverflow < 0) {
                     firstSupplierOverflow = t;
                 }
+                double effectiveBeforePickup = Math.min(beforePickup, ins.Li[i]);
                 if (solution.z[i][t]) {
-                    solution.q[i][t] = beforePickup;
+                    solution.q[i][t] = effectiveBeforePickup;
                     solution.supplierInventory[i][t] = 0.0;
                     invEnd = 0.0;
                 } else {
                     solution.q[i][t] = 0.0;
-                    solution.supplierInventory[i][t] = beforePickup;
-                    invEnd = beforePickup;
+                    solution.supplierInventory[i][t] = effectiveBeforePickup;
+                    invEnd = effectiveBeforePickup;
                     supplierHoldingCost += ins.hi[i] * invEnd;
                 }
                 periodLoads[t] += solution.q[i][t];
@@ -131,8 +132,8 @@ public final class SolutionEvaluator {
             if (checkRoutes) {
                 for (int i = 1; i <= ins.n; i++) {
                     if (solution.z[i][t] && !seen[i][t] && reason == null) {
-                    reason = "planned visit missing on route i=" + i + ", t=" + t;
-                }
+                        reason = "planned visit missing on route i=" + i + ", t=" + t;
+                    }
                 }
             }
         }

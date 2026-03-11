@@ -33,4 +33,18 @@ public final class SolutionEvaluatorTest extends TestCase {
         solution.removeVisit(1, 1);
         assertEquals(10.0, solution.routes[1].get(0).load, 1e-6);
     }
+
+    public void testOverflowUsesCappedPickupAndInventoryValues() throws Exception {
+        Instance ins = AlnsTestSupport.overflowInstance();
+        AlnsSolution solution = new AlnsSolution(ins);
+        solution.z[1][2] = true;
+
+        SolutionEvaluator evaluator = new SolutionEvaluator();
+        SolutionEvaluator.EvaluationResult result = evaluator.evaluatePlan(ins, solution);
+
+        assertEquals(2, result.firstSupplierOverflowPeriod);
+        assertEquals(10.0, solution.q[1][2], 1e-6);
+        assertEquals(0.0, solution.supplierInventory[1][2], 1e-6);
+        assertEquals(ins.I00 + 10.0, result.cumulativeRawAvailability[2], 1e-6);
+    }
 }

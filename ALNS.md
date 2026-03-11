@@ -34,11 +34,12 @@ Original Model 的变量 z_it（是否访问）、q_it（取货量）、x_ijt（
 
 ### 初始解构造
 
-采用**周期性访问 + 贪心插入**策略：
+采用**deadline-aware 访问计划 + savings 构路**策略：
 
-1. 对每个收集点 i，根据其供给率 s_it 和库存容量 L_i，计算一个最大访问间隔 Δ_i = ⌊L_i / avg(s_it)⌋，然后均匀分配访问时期。
-2. 对每个时期 t，将该期需要访问的收集点集合构造 CVRP 初始解——用 Clarke-Wright savings 算法或最近邻插入启发式。
-3. 给定所有 q_it 后，用一个简单的 lot-sizing 贪心（或直接解一个小规模 LP）确定生产计划 p_t 和 y_t，使成品库存平衡和工厂原料库存约束满足。
+1. 对每个收集点 i 和时期 t，优先利用 `mu(i,t)` 的最晚安全访问期语义，先插入所有 deadline-forced visit。
+2. 若某一期的累计原料供应不足以支撑生产下界，则继续在该期插入额外访问，优先选择能提供最大 pickup 的客户，同时检查车辆总容量和单客户 overflow。
+3. 对每个时期 t，用 Clarke-Wright savings 算法构造 CVRP 初始解；若 savings 合并后路线数仍超过 K，则回退到 greedy packing。
+4. 给定所有 q_it 后，调用一个小规模的 exact production re-optimization MIP，得到 `p_t, y_t, P_0t, I_0t`。
 
 ### Destroy 算子（6个）
 
@@ -52,7 +53,7 @@ Original Model 的变量 z_it（是否访问）、q_it（取货量）、x_ijt（
 
 **D5 - Route Removal**：在某个时期 t 中，随机移除一条完整路径上的所有访问。
 
-**D6 - Production Perturbation**：不改变路径，而是打乱生产计划——随机将某些时期的 y_t 从 1 改为 0（取消生产），迫使生产重新分配。
+**D6 - Production Perturbation**：随机选择 1~2 个当前有生产的时期，将对应 `y_t, p_t` 置零；同时在该期或相邻期随机移除一部分访问，迫使 repair 和 `R4` 共同重构原料供应与生产分配。
 
 ### Repair 算子（4个）
 
@@ -60,7 +61,7 @@ Original Model 的变量 z_it（是否访问）、q_it（取货量）、x_ijt（
 
 **R2 - Regret-k Insertion**：计算每个待插入访问的"regret值"（最好插入位置和第 k 好插入位置的成本差），优先插入 regret 值最大的访问，避免贪心陷阱。
 
-**R3 - Period-by-Period Reconstruction**：对被 destroy 的时期，按时间顺序逐期重建——确定该期需要访问哪些收集点（基于库存溢出紧迫度），然后用 savings 算法构造路径。
+**R3 - Period-by-Period Reconstruction**：对受影响的时期（`destroyedPeriods` 或 `removedVisits` 涉及的时期），按时间顺序逐期重建——先选择该期必须访问或对原料最有贡献的收集点，再用 savings 算法构造路径；若某期重建失败，则回退到 task-based greedy repair。
 
 **R4 - Production Re-optimization**：给定 repair 后的访问计划和路径，将生产计划视为一个确定性 lot-sizing 问题（线性规划），精确求解 p_t, y_t, P_0t, I_0t。这一步计算量很小（变量数 = O(|T|)），可以用单纯形法瞬间解出。
 
@@ -68,11 +69,11 @@ Original Model 的变量 z_it（是否访问）、q_it（取货量）、x_ijt（
 
 每次 destroy-repair 后，需要检查：收集点库存不超容量 L_i（硬约束）、工厂原料和成品库存不超容量（硬约束）、每期车辆数不超过 K、每条路径载重不超过 Q。
 
-关键加速：维护一个**增量评估**机制。对库存，维护前缀和使得修改一个 z[i][t] 后能 O(|T|) 更新该收集点的整条库存轨迹。对路径成本，维护邻接矩阵使得单次插入/删除的成本变化可以 O(1) 算出。
+关键加速：维护一个**增量评估**机制。对库存，不再为每个候选解 deepCopy 全部 `z/q/routes`，而是只对受影响客户临时翻转 `z[i][t]`，用 O(|T|) 重算该客户的持有成本和 overflow；对路径成本，单次插入/删除/跨路径交换的 routing delta 用 O(1) 算出，同路径 relocate/swap 用 O(route size) 算出。
 
 ### 接受准则与自适应权重
 
-使用**模拟退火**接受准则：以概率 exp(-ΔZ / temperature) 接受恶化解，temperature 按指数衰减。
+使用**模拟退火**接受准则：以概率 exp(-ΔZ / temperature) 接受恶化解。温度不是按固定迭代次数冷却，而是按运行时间进度做指数衰减，使 60 秒等时限实验下的温度曲线更稳定。
 
 自适应权重更新：每个 destroy 算子和 repair 算子维护一个权重 w_d, w_r，每隔一个 segment（比如 100 次迭代）根据表现更新。表现指标：找到新全局最优得 σ₁ 分，找到比当前解好的解得 σ₂ 分，被接受但比当前差得 σ₃ 分。
 
@@ -110,7 +111,7 @@ for iter = 1 to MAX_ITER:
     if iter % segment_size == 0:
         更新自适应权重
     
-    T = T * cooling_rate
+    temperature = T0 * (finalTemperatureRatio ^ progress)
 
 return S*
 ```
