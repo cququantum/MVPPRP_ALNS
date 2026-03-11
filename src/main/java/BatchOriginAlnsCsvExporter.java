@@ -21,7 +21,9 @@ import java.util.Locale;
 import java.util.Set;
 
 public final class BatchOriginAlnsCsvExporter {
-    private static final int[] INSTANCE_FAMILIES = new int[]{1};
+    private enum SolverMode {ORIGINAL, ALNS, COMPARE}
+
+    private static final int[] INSTANCE_FAMILIES = new int[]{1, 2, 3, 4};
     private static final int[] CUSTOMER_COUNTS = new int[]{10};
     private static final int[] PERIOD_COUNTS = new int[]{3, 6, 9};
     private static final int[] VEHICLE_COUNTS = new int[]{2, 3};
@@ -42,6 +44,15 @@ public final class BatchOriginAlnsCsvExporter {
     }
 
     public static void main(String[] args) throws Exception {
+        SolverMode solverMode = SolverMode.ALNS;
+        for (String arg : args) {
+            if (arg.startsWith("--solver=")) {
+                solverMode = parseSolverMode(arg.substring("--solver=".length()));
+            } else {
+                throw new IllegalArgumentException("Unsupported argument: " + arg);
+            }
+        }
+
         String[] instancePaths = buildInstancePaths();
         Set<String> completedKeys = new HashSet<String>();
         ensureOutputFile(completedKeys);
@@ -51,45 +62,85 @@ public final class BatchOriginAlnsCsvExporter {
                 StandardCharsets.UTF_8,
                 StandardOpenOption.APPEND
         )) {
-            int totalRows = instancePaths.length * METHODS_PER_INSTANCE;
-            int progress = completedKeys.size();
+            int totalRows = instancePaths.length * methodsPerInstance(solverMode);
+            int progress = countCompletedRows(completedKeys, solverMode);
 
             for (String instancePath : instancePaths) {
                 String instanceName = instanceName(instancePath);
                 final Instance ins = loadInstance(instancePath);
 
-                progress = runAndWriteIfNeeded(
-                        writer,
-                        instanceName,
-                        "origin",
-                        completedKeys,
-                        progress,
-                        totalRows,
-                        new SolveSupplier() {
-                            @Override
-                            public SolveResult get() {
-                                return new OriginalModelSolver().solve(ins);
+                if (solverMode == SolverMode.ORIGINAL || solverMode == SolverMode.COMPARE) {
+                    progress = runAndWriteIfNeeded(
+                            writer,
+                            instanceName,
+                            "origin",
+                            completedKeys,
+                            progress,
+                            totalRows,
+                            new SolveSupplier() {
+                                @Override
+                                public SolveResult get() {
+                                    return new OriginalModelSolver().solve(ins);
+                                }
                             }
-                        }
-                );
+                    );
+                }
 
-                progress = runAndWriteIfNeeded(
-                        writer,
-                        instanceName,
-                        "alns",
-                        completedKeys,
-                        progress,
-                        totalRows,
-                        new SolveSupplier() {
-                            @Override
-                            public SolveResult get() {
-                                AlnsConfig config = AlnsConfig.defaults().withTimeLimitSec(ALNS_TIME_LIMIT_SEC);
-                                return new AlnsSolver(config).solve(ins);
+                if (solverMode == SolverMode.ALNS || solverMode == SolverMode.COMPARE) {
+                    progress = runAndWriteIfNeeded(
+                            writer,
+                            instanceName,
+                            "alns",
+                            completedKeys,
+                            progress,
+                            totalRows,
+                            new SolveSupplier() {
+                                @Override
+                                public SolveResult get() {
+                                    AlnsConfig config = AlnsConfig.defaults().withTimeLimitSec(ALNS_TIME_LIMIT_SEC);
+                                    return new AlnsSolver(config).solve(ins);
+                                }
                             }
-                        }
-                );
+                    );
+                }
             }
         }
+    }
+
+    private static SolverMode parseSolverMode(String x) {
+        String v = x.trim().toLowerCase(Locale.ROOT);
+        if ("original".equals(v)) {
+            return SolverMode.ORIGINAL;
+        }
+        if ("alns".equals(v)) {
+            return SolverMode.ALNS;
+        }
+        if ("compare".equals(v)) {
+            return SolverMode.COMPARE;
+        }
+        throw new IllegalArgumentException("Unsupported --solver mode: " + x);
+    }
+
+    private static int methodsPerInstance(SolverMode solverMode) {
+        return solverMode == SolverMode.COMPARE ? METHODS_PER_INSTANCE : 1;
+    }
+
+    private static int countCompletedRows(Set<String> completedKeys, SolverMode solverMode) {
+        int count = 0;
+        for (String key : completedKeys) {
+            if (solverMode == SolverMode.COMPARE) {
+                if (key.endsWith("|origin") || key.endsWith("|alns")) {
+                    count++;
+                }
+            } else if (solverMode == SolverMode.ORIGINAL) {
+                if (key.endsWith("|origin")) {
+                    count++;
+                }
+            } else if (key.endsWith("|alns")) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private static String[] buildInstancePaths() {
