@@ -650,14 +650,7 @@ public final class AlnsSolver {
                 }
                 IncrementalEvaluator.InsertionDelta id = IncrementalEvaluator.visitInsertionDelta(
                         ins, solution, customer, t, insertion.routeIdx, insertion.position, demand);
-                if (id.causesOverflow) {
-                    continue;
-                }
-                solution.z[customer][t] = true;
-                int postOverflow = IncrementalEvaluator.firstOverflowForCustomer(
-                        ins, solution.z[customer], customer);
-                solution.z[customer][t] = false;
-                if (postOverflow >= 0 && postOverflow <= task.deadline) {
+                if (id.firstOverflowAfter >= 0 && id.firstOverflowAfter <= task.deadline) {
                     continue;
                 }
                 candidates.add(new InsertionCandidate(customer, t, insertion.routeIdx, insertion.position, id.totalDelta, demand));
@@ -683,7 +676,7 @@ public final class AlnsSolver {
                     }
                     IncrementalEvaluator.InsertionDelta id = IncrementalEvaluator.visitInsertionDelta(
                             ins, solution, customer, t, insertion.routeIdx, insertion.position, demand);
-                    if (id.causesOverflow) {
+                    if (id.firstOverflowAfter >= 0 && id.firstOverflowAfter <= task.deadline) {
                         continue;
                     }
                     candidates.add(new InsertionCandidate(customer, t, insertion.routeIdx, insertion.position, id.totalDelta, gain));

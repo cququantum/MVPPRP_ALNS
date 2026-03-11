@@ -4,7 +4,10 @@ import instance.Instance;
 import junit.framework.TestCase;
 import model.SolveResult;
 
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.Random;
 
 public final class AlnsSolverTest extends TestCase {
@@ -124,5 +127,52 @@ public final class AlnsSolverTest extends TestCase {
         assertFalse(solution.z[1][2]);
         assertEquals(1, solution.routes[1].size());
         assertEquals(Integer.valueOf(1), solution.routes[1].get(0).customers.get(0));
+    }
+
+    public void testSupplierCandidatesKeepInsertionThatOnlyOverflowsAfterDeadline() throws Exception {
+        Instance ins = AlnsTestSupport.overflowAfterDeadlineInstance();
+        AlnsSolution solution = new AlnsSolution(ins);
+        AlnsSolver solver = new AlnsSolver(AlnsConfig.defaults().withTimeLimitSec(1.0));
+
+        ArrayList<?> candidates = invokeCandidatesForTask(solver, ins, solution, "SUPPLIER", 1, 2);
+
+        assertTrue(containsCandidateForPeriod(candidates, 1));
+    }
+
+    public void testRawCandidatesKeepInsertionThatOnlyOverflowsAfterDeadline() throws Exception {
+        Instance ins = AlnsTestSupport.overflowAfterDeadlineInstance();
+        AlnsSolution solution = new AlnsSolution(ins);
+        AlnsSolver solver = new AlnsSolver(AlnsConfig.defaults().withTimeLimitSec(1.0));
+
+        ArrayList<?> candidates = invokeCandidatesForTask(solver, ins, solution, "RAW", -1, 2);
+
+        assertTrue(containsCandidateForPeriod(candidates, 1));
+    }
+
+    private ArrayList<?> invokeCandidatesForTask(AlnsSolver solver, Instance ins, AlnsSolution solution,
+                                                 String taskTypeName, int customer, int deadline) throws Exception {
+        Class<?> taskTypeClass = Class.forName("alns.AlnsSolver$TaskType");
+        @SuppressWarnings("unchecked")
+        Object taskType = Enum.valueOf((Class<Enum>) taskTypeClass.asSubclass(Enum.class), taskTypeName);
+
+        Class<?> taskClass = Class.forName("alns.AlnsSolver$Task");
+        Constructor<?> constructor = taskClass.getDeclaredConstructor(taskTypeClass, int.class, int.class);
+        constructor.setAccessible(true);
+        Object task = constructor.newInstance(taskType, Integer.valueOf(customer), Integer.valueOf(deadline));
+
+        Method method = AlnsSolver.class.getDeclaredMethod("candidatesForTask", Instance.class, AlnsSolution.class, taskClass);
+        method.setAccessible(true);
+        return (ArrayList<?>) method.invoke(solver, ins, solution, task);
+    }
+
+    private boolean containsCandidateForPeriod(ArrayList<?> candidates, int period) throws Exception {
+        for (Object candidate : candidates) {
+            Field field = candidate.getClass().getDeclaredField("period");
+            field.setAccessible(true);
+            if (field.getInt(candidate) == period) {
+                return true;
+            }
+        }
+        return false;
     }
 }

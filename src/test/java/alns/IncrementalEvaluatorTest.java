@@ -55,6 +55,18 @@ public final class IncrementalEvaluatorTest extends TestCase {
         assertEquals(expected, delta.totalDelta, 1e-6);
     }
 
+    public void testVisitInsertionDeltaReportsFirstOverflowAfterInsertedPeriod() throws Exception {
+        Instance ins = AlnsTestSupport.overflowAfterDeadlineInstance();
+        AlnsSolution solution = new AlnsSolution(ins);
+
+        double demand = ins.g(1, solution.previousVisit(1, 1), 1);
+        IncrementalEvaluator.InsertionDelta delta = IncrementalEvaluator.visitInsertionDelta(
+                ins, solution, 1, 1, 0, 0, demand);
+
+        assertTrue(delta.causesOverflow);
+        assertEquals(3, delta.firstOverflowAfter);
+    }
+
     public void testRoutingOnlyRelocateDeltaMatchesActualRouteCostChange() throws Exception {
         Instance ins = AlnsTestSupport.threeCustomerSinglePeriodInstance();
         AlnsSolution solution = new AlnsSolution(ins);
