@@ -21,7 +21,7 @@ import java.util.Locale;
 import java.util.Set;
 
 public final class BatchOriginAlnsCsvExporter {
-    private static final int[] INSTANCE_FAMILIES = new int[]{1, 2, 3, 4};
+    private static final int[] INSTANCE_FAMILIES = new int[]{1};
     private static final int[] CUSTOMER_COUNTS = new int[]{10};
     private static final int[] PERIOD_COUNTS = new int[]{3, 6, 9};
     private static final int[] VEHICLE_COUNTS = new int[]{2, 3};
