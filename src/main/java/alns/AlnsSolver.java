@@ -100,14 +100,22 @@ public final class AlnsSolver {
         int bestIter = 0;
         int restartCount = 0;
         int itersSinceBestImprovement = 0;
+        int itersSinceCurrentImprovement = 0;
         int reheatIterationsRemaining = 0;
         int restartThreshold = Math.max(1, config.restartStagnationSegments * config.segmentSize);
+        int currentStagnationThreshold = Math.max(1, config.currentStagnationSegments * config.segmentSize);
 
         double initialTemperature = Math.max(1e-6, 0.05 * current.objective / Math.log(2.0));
         while (System.nanoTime() < deadlineNs) {
-            if (itersSinceBestImprovement >= restartThreshold) {
+            if (shouldRestart(
+                    itersSinceBestImprovement,
+                    restartThreshold,
+                    itersSinceCurrentImprovement,
+                    currentStagnationThreshold
+            )) {
                 current = best.deepCopy(ins);
                 itersSinceBestImprovement = 0;
+                itersSinceCurrentImprovement = 0;
                 restartCount++;
                 reheatIterationsRemaining = config.segmentSize;
             }
@@ -124,13 +132,14 @@ public final class AlnsSolver {
             double destroyFraction = reheatActive ? config.restartDestroyFraction : config.destroyFraction;
             DestroyContext ctx = applyDestroy(ins, candidate, destroyIdx, random, destroyFraction);
 
+            boolean improvedCurrent = false;
             boolean improvedBest = false;
             if (applyRepair(ins, candidate, repairIdx, ctx, deadlineNs, random)
                     && runProduction(candidate, ins, deadlineNs)
                     && localSearch(ins, candidate, deadlineNs, random)
                     && candidate.feasible
                     && !Double.isNaN(candidate.objective)) {
-                boolean improvedCurrent = candidate.objective < currentObjective - SolutionEvaluator.EPS;
+                improvedCurrent = candidate.objective < currentObjective - SolutionEvaluator.EPS;
                 improvedBest = candidate.objective < best.objective - SolutionEvaluator.EPS;
                 boolean accept = shouldAccept(
                         currentObjective,
@@ -162,8 +171,13 @@ public final class AlnsSolver {
 
             if (improvedBest) {
                 itersSinceBestImprovement = 0;
+                itersSinceCurrentImprovement = 0;
+            } else if (improvedCurrent) {
+                itersSinceBestImprovement++;
+                itersSinceCurrentImprovement = 0;
             } else {
                 itersSinceBestImprovement++;
+                itersSinceCurrentImprovement++;
             }
 
             if (iter % config.segmentSize == 0) {
@@ -189,6 +203,11 @@ public final class AlnsSolver {
                 restartCount
         );
         return new SolveResult("ALNS", best.feasible, false, status, best.objective, Double.NaN, Double.NaN, sec);
+    }
+
+    private static boolean shouldRestart(int bestStagnation, int bestThreshold,
+                                         int currentStagnation, int currentThreshold) {
+        return bestStagnation >= bestThreshold && currentStagnation >= currentThreshold;
     }
 
     private boolean runProduction(AlnsSolution solution, Instance ins, long deadlineNs) {

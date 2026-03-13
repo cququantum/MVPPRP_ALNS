@@ -235,7 +235,7 @@ public final class AlnsSolverTest extends TestCase {
 
     public void testSolverRestartStatusIncludesPositiveRestartCount() throws Exception {
         Instance ins = AlnsTestSupport.routeOnlyInstance();
-        AlnsConfig config = configForTests(0.2, 1, 40, 20, 6, 0.25, 1, 0.35, 3.0, 1.5, 0.6);
+        AlnsConfig config = configForTests(0.2, 1, 40, 20, 6, 0.25, 1, 0.35, 3.0, 1.5, 0.6, 1);
 
         SolveResult result = new AlnsSolver(config).solve(ins);
         int restarts = extractStatusInt(result.status, "restarts=");
@@ -256,7 +256,7 @@ public final class AlnsSolverTest extends TestCase {
         solution.setProductionPlan(production);
         new SolutionEvaluator().evaluateFull(ins, solution);
 
-        AlnsConfig config = configForTests(1.0, 100, 0, 1, 6, 0.25, 10, 0.35, 3.0, 1.5, 0.6);
+        AlnsConfig config = configForTests(1.0, 100, 0, 1, 6, 0.25, 10, 0.35, 3.0, 1.5, 0.6, 3);
         AlnsSolver solver = new AlnsSolver(config);
         Method method = AlnsSolver.class.getDeclaredMethod(
                 "localSearch",
@@ -337,6 +337,31 @@ public final class AlnsSolverTest extends TestCase {
         assertTrue(newScoreA > newScoreB);
     }
 
+    public void testRestartRequiresBestAndCurrentStagnation() throws Exception {
+        Method method = AlnsSolver.class.getDeclaredMethod(
+                "shouldRestart",
+                int.class,
+                int.class,
+                int.class,
+                int.class
+        );
+        method.setAccessible(true);
+
+        boolean blocked = ((Boolean) method.invoke(null,
+                Integer.valueOf(1000),
+                Integer.valueOf(1000),
+                Integer.valueOf(299),
+                Integer.valueOf(300))).booleanValue();
+        boolean triggered = ((Boolean) method.invoke(null,
+                Integer.valueOf(1000),
+                Integer.valueOf(1000),
+                Integer.valueOf(300),
+                Integer.valueOf(300))).booleanValue();
+
+        assertFalse(blocked);
+        assertTrue(triggered);
+    }
+
     private ArrayList<?> invokeCandidatesForTask(AlnsSolver solver, Instance ins, AlnsSolution solution,
                                                  String taskTypeName, int customer, int deadline) throws Exception {
         Class<?> taskTypeClass = Class.forName("alns.AlnsSolver$TaskType");
@@ -374,7 +399,8 @@ public final class AlnsSolverTest extends TestCase {
                                       double restartDestroyFraction,
                                       double restartTemperatureMultiplier,
                                       double overflowPenaltyFactor,
-                                      double relatedTemporalWeight) {
+                                      double relatedTemporalWeight,
+                                      int currentStagnationSegments) {
         return new AlnsConfig(
                 123L,
                 timeLimitSec,
@@ -392,7 +418,8 @@ public final class AlnsSolverTest extends TestCase {
                 restartDestroyFraction,
                 restartTemperatureMultiplier,
                 overflowPenaltyFactor,
-                relatedTemporalWeight
+                relatedTemporalWeight,
+                currentStagnationSegments
         );
     }
 

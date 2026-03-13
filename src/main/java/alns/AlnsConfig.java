@@ -18,6 +18,7 @@ public final class AlnsConfig {
     public final double restartTemperatureMultiplier;
     public final double worstDestroyOverflowPenaltyFactor;
     public final double relatedTemporalWeight;
+    public final int currentStagnationSegments;
 
     public AlnsConfig(
             long seed,
@@ -36,7 +37,8 @@ public final class AlnsConfig {
             double restartDestroyFraction,
             double restartTemperatureMultiplier,
             double worstDestroyOverflowPenaltyFactor,
-            double relatedTemporalWeight
+            double relatedTemporalWeight,
+            int currentStagnationSegments
     ) {
         this.seed = seed;
         this.timeLimitSec = timeLimitSec;
@@ -55,6 +57,7 @@ public final class AlnsConfig {
         this.restartTemperatureMultiplier = restartTemperatureMultiplier;
         this.worstDestroyOverflowPenaltyFactor = worstDestroyOverflowPenaltyFactor;
         this.relatedTemporalWeight = relatedTemporalWeight;
+        this.currentStagnationSegments = currentStagnationSegments;
     }
 
     public static AlnsConfig defaults() {
@@ -75,7 +78,8 @@ public final class AlnsConfig {
                 0.35,
                 3.0,
                 1.5,
-                0.6
+                0.6,
+                3
         );
     }
 
@@ -97,7 +101,8 @@ public final class AlnsConfig {
                 restartDestroyFraction,
                 restartTemperatureMultiplier,
                 worstDestroyOverflowPenaltyFactor,
-                relatedTemporalWeight
+                relatedTemporalWeight,
+                currentStagnationSegments
         );
     }
 
@@ -119,7 +124,8 @@ public final class AlnsConfig {
                 restartDestroyFraction,
                 restartTemperatureMultiplier,
                 worstDestroyOverflowPenaltyFactor,
-                relatedTemporalWeight
+                relatedTemporalWeight,
+                currentStagnationSegments
         );
     }
 }
