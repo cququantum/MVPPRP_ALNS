@@ -8,9 +8,16 @@ public final class AlnsConfig {
     public final double sigmaBest;
     public final double sigmaImprove;
     public final double sigmaAccepted;
-    public final int moveBudgetPerIteration;
     public final double finalTemperatureRatio;
-    public final int maxDestroyVisits;
+    public final int intraPeriodMoveBudgetPerIteration;
+    public final int crossPeriodMoveBudgetPerIteration;
+    public final int minDestroyVisits;
+    public final double destroyFraction;
+    public final int restartStagnationSegments;
+    public final double restartDestroyFraction;
+    public final double restartTemperatureMultiplier;
+    public final double worstDestroyOverflowPenaltyFactor;
+    public final double relatedTemporalWeight;
 
     public AlnsConfig(
             long seed,
@@ -20,9 +27,16 @@ public final class AlnsConfig {
             double sigmaBest,
             double sigmaImprove,
             double sigmaAccepted,
-            int moveBudgetPerIteration,
             double finalTemperatureRatio,
-            int maxDestroyVisits
+            int intraPeriodMoveBudgetPerIteration,
+            int crossPeriodMoveBudgetPerIteration,
+            int minDestroyVisits,
+            double destroyFraction,
+            int restartStagnationSegments,
+            double restartDestroyFraction,
+            double restartTemperatureMultiplier,
+            double worstDestroyOverflowPenaltyFactor,
+            double relatedTemporalWeight
     ) {
         this.seed = seed;
         this.timeLimitSec = timeLimitSec;
@@ -31,9 +45,16 @@ public final class AlnsConfig {
         this.sigmaBest = sigmaBest;
         this.sigmaImprove = sigmaImprove;
         this.sigmaAccepted = sigmaAccepted;
-        this.moveBudgetPerIteration = moveBudgetPerIteration;
         this.finalTemperatureRatio = finalTemperatureRatio;
-        this.maxDestroyVisits = maxDestroyVisits;
+        this.intraPeriodMoveBudgetPerIteration = intraPeriodMoveBudgetPerIteration;
+        this.crossPeriodMoveBudgetPerIteration = crossPeriodMoveBudgetPerIteration;
+        this.minDestroyVisits = minDestroyVisits;
+        this.destroyFraction = destroyFraction;
+        this.restartStagnationSegments = restartStagnationSegments;
+        this.restartDestroyFraction = restartDestroyFraction;
+        this.restartTemperatureMultiplier = restartTemperatureMultiplier;
+        this.worstDestroyOverflowPenaltyFactor = worstDestroyOverflowPenaltyFactor;
+        this.relatedTemporalWeight = relatedTemporalWeight;
     }
 
     public static AlnsConfig defaults() {
@@ -45,9 +66,16 @@ public final class AlnsConfig {
                 10.0,
                 5.0,
                 1.0,
-                60,
                 1e-3,
-                6
+                40,
+                20,
+                6,
+                0.25,
+                10,
+                0.35,
+                3.0,
+                1.5,
+                0.6
         );
     }
 
@@ -60,9 +88,16 @@ public final class AlnsConfig {
                 sigmaBest,
                 sigmaImprove,
                 sigmaAccepted,
-                moveBudgetPerIteration,
                 finalTemperatureRatio,
-                maxDestroyVisits
+                intraPeriodMoveBudgetPerIteration,
+                crossPeriodMoveBudgetPerIteration,
+                minDestroyVisits,
+                destroyFraction,
+                restartStagnationSegments,
+                restartDestroyFraction,
+                restartTemperatureMultiplier,
+                worstDestroyOverflowPenaltyFactor,
+                relatedTemporalWeight
         );
     }
 
@@ -75,9 +110,16 @@ public final class AlnsConfig {
                 sigmaBest,
                 sigmaImprove,
                 sigmaAccepted,
-                moveBudgetPerIteration,
                 finalTemperatureRatio,
-                maxDestroyVisits
+                intraPeriodMoveBudgetPerIteration,
+                crossPeriodMoveBudgetPerIteration,
+                minDestroyVisits,
+                destroyFraction,
+                restartStagnationSegments,
+                restartDestroyFraction,
+                restartTemperatureMultiplier,
+                worstDestroyOverflowPenaltyFactor,
+                relatedTemporalWeight
         );
     }
 }
