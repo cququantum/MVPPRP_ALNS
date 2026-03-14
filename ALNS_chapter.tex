@@ -1,0 +1,673 @@
+% bpc.tex — Branch-Price-and-Cut 求解 CVRP 子问题
+% 符号体系与 lbbd.tex / reformulationModel.tex / speed.tex 保持一致
+
+\documentclass{article}
+\usepackage{amsmath,amssymb,amsfonts,amsthm}
+\usepackage{enumitem}
+\usepackage{geometry}
+\usepackage{mathrsfs}
+\geometry{a4paper, margin=1in}
+\usepackage{ctex}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage[linesnumbered,ruled,vlined]{algorithm2e}
+
+\newtheorem{remark}{注}
+\newtheorem{definition}{定义}
+\newtheorem{proposition}{命题}
+
+\begin{document}
+
+\title{基于自适应大邻域搜索的启发式求解方法}
+\maketitle  % 必须添加这一行，LaTeX 才会把声明的标题渲染出来
+\label{chap:alns}
+
+上一章建立的 Original Model 能够通过 CPLEX 等求解器获得精确最优解，
+但随着收集点数量 $n$、时期数 $l$ 和车辆数 $K$ 的增长，
+混合整数规划（MIP）的求解时间迅速膨胀，难以在可接受的时间内求解中大规模实例。
+因此，本章设计一种基于自适应大邻域搜索（Adaptive Large Neighbourhood Search, ALNS）
+的元启发式算法来高效求解 MVPRP。
+
+%% ============================================================
+\section{算法框架选择的理论依据}
+\label{sec:alns-motivation}
+%% ============================================================
+
+\subsection{为何选择 Original Model 作为解空间的基础}
+
+第~\ref{chap:model}~章同时介绍了 Original Model 与基于最短路重构的
+Reformulation Model。后者通过引入 $\lambda_{ivt}$ 变量
+将收集点库存约束编码进最短路网络，使线性规划（LP）松弛更紧，
+适用于列生成与对偶割的精确求解框架。
+然而在启发式环境中，算法直接操作可行解而非求解 LP 松弛，
+Reformulation 在松弛质量上的优势无法发挥作用。
+
+Original Model 的决策变量——访问标记 $z_{it}$、取货量 $q_{it}$、
+路径弧 $x_{ijt}$、生产量 $p_t$——均具有直接的物理含义。
+邻域操作（如插入或移除一次访问、交换路径弧段、调整生产量）
+的定义与可行性检查因此更为直观。
+相比之下，$\lambda_{ivt}$ 的最短路流平衡约束
+在每次邻域移动后都需要维护链式一致性，
+增加实现复杂度却无法在启发式框架中带来解质量的提升。
+因此，本章选择 Original Model 的变量空间作为 ALNS 的操作基础。
+
+\subsection{为何选择 ALNS 框架}
+
+MVPRP 耦合了三个子结构：批量生产决策（lot-sizing）、
+多层库存管理（inventory management）、以及带容量约束的多车路径规划（CVRP）。
+ALNS 的"破坏—修复"（destroy–repair）框架天然适合此类多维决策问题，
+原因有三：
+
+\begin{enumerate}
+  \item \textbf{子结构专用算子。}
+    可以针对不同子结构设计专门的破坏与修复算子：
+    "移除某收集点在某时期的访问"作用于库存层面；
+    "重建某时期的路径"作用于路径层面；
+    "扰动一段时间窗内的生产计划"作用于生产层面。
+    这些算子可独立设计、灵活组合。
+  \item \textbf{自适应权重机制。}
+    ALNS 通过自适应权重调整自动学习当前实例上最有效的算子组合，
+    比固定邻域结构（如禁忌搜索）更具鲁棒性与灵活性。
+  \item \textbf{文献基础成熟。}
+    在库存路径问题（IRP）与生产路径问题（PRP）领域，
+    ALNS 已被广泛采用并积累了大量成熟的算子设计经验
+    \cite{Ropke2006,Pisinger2007,Coelho2014,Adulyasak2015}。
+\end{enumerate}
+
+%% ============================================================
+\section{解的表示与评价}
+\label{sec:alns-representation}
+%% ============================================================
+
+\subsection{解的编码}
+
+一个完整解 $\mathcal{S}$ 由以下组件构成：
+
+\begin{itemize}
+  \item \textbf{访问计划} $z_{it} \in \{0,1\}$：
+    收集点 $i$ 在时期 $t$ 是否被访问，$i=1,\dots,n$，$t=1,\dots,l$。
+  \item \textbf{取货量} $q_{it} \geq 0$：
+    若 $z_{it}=1$，则 $q_{it}$ 等于访问时收集点 $i$ 的全部库存
+    （即清空策略）；否则 $q_{it}=0$。
+  \item \textbf{路径方案} $\mathcal{R}_t$：
+    时期 $t$ 的一组车辆路径，每条路径为一个收集点序列，
+    满足载重约束 $Q$ 与车辆数约束 $K$。
+  \item \textbf{生产计划} $(y_t, p_t, P^0_t, I^0_t)$：
+    分别为时期 $t$ 的生产启动标志、生产量、成品库存和原料库存。
+\end{itemize}
+
+关键的层次依赖关系为：$z$ 与 $\mathcal{R}$ 确定后，
+$q$ 由清空策略直接计算；
+给定 $q$，工厂原料库存 $I^0$ 由库存平衡方程确定；
+生产计划 $(y_t, p_t, P^0_t)$ 则由独立的子问题优化得出。
+
+\subsection{目标函数分解}
+
+总目标函数可分解为三个部分：
+\begin{equation}
+  Z(\mathcal{S}) = Z_{\text{route}} + Z_{\text{inv}} + Z_{\text{prod}}
+  \label{eq:alns-objective}
+\end{equation}
+其中：
+\begin{align}
+  Z_{\text{route}}
+    &= \sum_{t=1}^{l} \sum_{(i,j) \in \mathcal{R}_t} c_{ij}
+    \label{eq:alns-route-cost} \\
+  Z_{\text{inv}}
+    &= \sum_{t=1}^{l} \sum_{i=1}^{n} h_i \cdot I_{it}
+    \label{eq:alns-holding-cost} \\
+  Z_{\text{prod}}
+    &= \sum_{t=1}^{l} \bigl( u \cdot p_t + f \cdot y_t
+       + h_0 \cdot I^0_t + h_p \cdot P^0_t \bigr)
+    \label{eq:alns-prod-cost}
+\end{align}
+其中 $I_{it}$ 为收集点 $i$ 在时期 $t$ 末的库存，
+$c_{ij}$ 为从节点 $i$ 到节点 $j$ 的运输成本。
+
+\subsection{可行性检查}
+
+每次破坏-修复操作后，需验证以下硬约束：
+
+\begin{enumerate}
+  \item \textbf{收集点库存容量：}
+    对所有 $i,t$，取货前库存
+    $I_{i,t-1} + s_{it} \leq L_i$。
+  \item \textbf{工厂原料与成品库存容量：}
+    $I^0_t \leq L_0$ 且 $P^0_t \leq L_p$。
+  \item \textbf{车辆数约束：}
+    每期使用的路径数 $|\mathcal{R}_t| \leq K$。
+  \item \textbf{载重约束：}
+    每条路径的总载重 $\sum_{i \in r} q_{it} \leq Q$。
+\end{enumerate}
+
+%% ============================================================
+\section{增量评价机制}
+\label{sec:alns-incremental}
+%% ============================================================
+
+ALNS 的核心效率瓶颈在于每次候选移动的评价成本。
+若每次移动都执行完整的解拷贝与全量重新评价，计算代价将十分高昂。
+因此，本文设计了一套增量评价（incremental evaluation）机制，
+仅计算移动引起的目标函数变化量 $\Delta Z$，
+而无需重建整个解。
+
+\subsection{收集点库存的增量计算}
+
+对于收集点 $i$，其库存轨迹完全由访问序列 $\{t : z_{it}=1\}$ 决定。
+当考虑翻转某个 $z_{it}$ 时，只需沿时间轴重算该收集点的库存序列，
+时间复杂度为 $O(l)$。具体做法为：临时翻转 $z_{it}$ 的值，
+沿 $t=1,\dots,l$ 顺序扫描该收集点的库存演化，
+计算新的持有成本与溢出状态，然后恢复原值。
+该过程不产生任何对象分配，全部在原始解上原地完成。
+
+\subsection{路径成本的增量计算}
+
+对于单次插入或移除操作，路径成本变化量可由邻接节点的距离差直接计算。
+设收集点 $c$ 位于路径中位置 $\text{pos}$，
+其前驱为 $\text{prev}$，后继为 $\text{next}$（depot 以节点 $0$ 和 $n{+}1$ 表示），则：
+
+\begin{itemize}
+  \item 移除 $c$ 的路径成本变化：
+    $\Delta_{\text{remove}} = c_{\text{prev},\text{next}}
+     - c_{\text{prev},c} - c_{c,\text{next}}$
+  \item 在 $\text{prev}$ 与 $\text{next}$ 之间插入 $c$：
+    $\Delta_{\text{insert}} = c_{\text{prev},c} + c_{c,\text{next}}
+     - c_{\text{prev},\text{next}}$
+\end{itemize}
+
+对于同路径内的 relocate 或 swap 操作，
+由于前驱-后继关系发生耦合变化，
+本文采用完整的路径成本重算（复杂度 $O(|\text{route}|)$）
+以保证正确性。
+
+\subsection{综合移动评价}
+
+一个访问移除的综合评价 $\Delta_{\text{total}}$ 由路径成本变化量
+$\Delta_{\text{route}}$ 与库存持有成本变化量 $\Delta_{\text{inv}}$ 之和构成：
+\begin{equation}
+  \Delta_{\text{total}} = \Delta_{\text{route}} + \Delta_{\text{inv}}
+  \label{eq:incremental-total}
+\end{equation}
+同时，增量评价还返回布尔标志指示移动是否导致收集点库存溢出，
+供后续的可行性过滤使用。
+
+%% ============================================================
+\section{初始解的构造}
+\label{sec:alns-initial}
+%% ============================================================
+
+良好的初始解能显著加速 ALNS 的收敛。
+本文采用"截止期驱动访问规划 $+$ 节约算法构路"的两阶段策略。
+
+\subsection{截止期驱动的访问计划}
+
+利用 $\mu(i,t)$ 参数的语义——
+收集点 $i$ 在时期 $t$ 被最后一次访问后，
+能维持到的最晚时期——
+逐期构建访问计划：
+
+\begin{enumerate}
+  \item 对每个时期 $t$，首先插入所有满足
+    $\mu(i, \text{prev}_i) = t$ 的强制访问
+    （即若不在 $t$ 时期访问收集点 $i$，
+    则后续必然发生库存溢出）。
+  \item 检查当前累计原料收集量是否满足生产下界需求。
+    若不足，贪心选择能提供最大取货量且不违反容量约束的收集点加入。
+  \item 每次插入前，通过增量评价验证插入不会导致
+    该收集点在当期或更早时期发生库存溢出。
+\end{enumerate}
+
+\subsection{路径构造}
+
+对每个时期 $t$，采用 Clarke-Wright 节约算法
+\cite{Clarke1964} 构造初始路径：
+
+\begin{enumerate}
+  \item 初始化：每个被访问的收集点单独构成一条路径。
+  \item 计算所有收集点对 $(i,j)$ 的节约值
+    $s_{ij} = c_{0i} + c_{j,n{+}1} - c_{ij}$。
+  \item 按节约值降序排列，依次尝试合并路径尾部为 $i$
+    与头部为 $j$ 的两条路径，
+    前提是合并后载重不超过 $Q$。
+  \item 若合并后路径数仍超过 $K$，
+    退化为贪心装箱策略：
+    按取货量降序排列收集点，
+    依次将每个收集点插入现有路径中成本增量最小的位置。
+\end{enumerate}
+
+\subsection{生产计划优化}
+
+给定访问计划与路径确定的取货量 $q_{it}$ 后，
+生产计划 $(y_t, p_t, P^0_t, I^0_t)$ 构成一个确定性的
+单产品批量生产问题（lot-sizing problem），
+其变量规模仅为 $O(l)$，
+可通过求解如下混合整数规划快速得到最优解：
+\begin{align}
+  \min \quad & \sum_{t=1}^{l} \bigl( u \cdot p_t + f \cdot y_t
+    + h_0 \cdot I^0_t + h_p \cdot P^0_t \bigr) \\
+  \text{s.t.} \quad
+    & P^0_{t-1} + p_t = d_t + P^0_t
+      & \forall\, t \label{eq:prod-finished-balance} \\
+    & p_t \leq C \cdot y_t
+      & \forall\, t \label{eq:prod-capacity} \\
+    & I^0_{t-1} + \textstyle\sum_{i} q_{it} = k \cdot p_t + I^0_t
+      & \forall\, t \label{eq:prod-raw-balance} \\
+    & I^0_t \leq L_0,\quad P^0_t \leq L_p
+      & \forall\, t \\
+    & y_t \in \{0,1\},\quad p_t, P^0_t, I^0_t \geq 0
+      & \forall\, t
+\end{align}
+由于该子问题规模极小，CPLEX 通常在毫秒级内返回最优解。
+这一设计将生产决策从 ALNS 的邻域搜索中解耦，
+使路径与库存层面的算子无需关心生产可行性的维护。
+
+%% ============================================================
+\section{破坏算子}
+\label{sec:alns-destroy}
+%% ============================================================
+
+本文设计了六种破坏算子，分别从随机性、成本敏感性、
+空间相关性、时间结构和生产耦合等不同维度破坏当前解。
+每次破坏操作移除的访问数量 $d$ 由以下公式自适应确定：
+\begin{equation}
+  d = \text{rand}\bigl[1, \;
+      \min\bigl(|\mathcal{V}|, \;
+      \max(d_{\min}, \lceil \rho \cdot n \cdot l \rceil)\bigr)\bigr]
+  \label{eq:destroy-count}
+\end{equation}
+其中 $|\mathcal{V}|$ 为当前解中的总访问数，
+$d_{\min}$ 为最小破坏量，$\rho$ 为破坏比例参数。
+
+\subsection{D1: 随机访问移除（Random Visit Removal）}
+
+从当前解的所有访问 $(i,t)$ 中均匀随机选取 $d$ 个，
+将其从解中移除。
+该算子提供最大的随机性，确保搜索空间的多样性。
+
+\subsection{D2: 最差成本移除（Worst Cost Removal）}
+
+对每个访问 $(i,t)$，利用增量评价计算其边际成本影响：
+\begin{equation}
+  \text{score}(i,t) = \Delta_{\text{route}}(i,t) + \Delta_{\text{inv}}(i,t)
+  \label{eq:worst-cost-score}
+\end{equation}
+其中 $\Delta_{\text{route}}$ 为移除该访问带来的路径成本减少量，
+$\Delta_{\text{inv}}$ 为移除后库存持有成本的变化量（通常为正，
+因为库存会在该期继续累积）。
+按 $\text{score}$ 升序排列（即边际贡献最差的访问排在前面），
+选取前 $d$ 个移除。
+
+对于移除后会导致库存溢出的访问，施加惩罚项以降低其被移除的优先级：
+\begin{equation}
+  \text{score}'(i,t) = \begin{cases}
+    \text{score}(i,t) + \alpha \cdot \bar{\sigma}
+      & \text{若移除导致溢出} \\
+    \text{score}(i,t) & \text{否则}
+  \end{cases}
+  \label{eq:worst-cost-penalty}
+\end{equation}
+其中 $\bar{\sigma}$ 为所有非溢出访问的平均边际成本绝对值，
+$\alpha > 0$ 为惩罚因子。
+
+\subsection{D3: 相关访问移除（Related Visit Removal）}
+
+随机选择一个种子访问 $(i_0, t_0)$，
+计算所有其他访问与种子的相关度：
+\begin{equation}
+  \text{relatedness}(i,t;\; i_0, t_0)
+    = (1-\omega) \cdot \frac{c_{i_0 i}}{c_{\max}}
+      + \omega \cdot \frac{|t_0 - t|}{l - 1}
+  \label{eq:relatedness}
+\end{equation}
+其中 $c_{\max} = \max_{i,j} c_{ij}$ 为最大距离，
+$\omega \in [0,1]$ 为时间权重参数，用于控制空间相似性与时间相近性之间的平衡。
+按相关度升序选取前 $d$ 个访问移除。
+
+直觉在于：地理位置接近且时间相邻的访问群体被同时移除后，
+留出一个连贯的"空白区域"，便于修复阶段系统性地重新规划。
+
+\subsection{D4: 时期破坏（Period Destruction）}
+
+随机选取 $1$ 至 $2$ 个时期，完全清除这些时期的所有访问与路径。
+该算子提供最大粒度的破坏，适用于某些时期的规划质量整体不佳的情况。
+
+\subsection{D5: 路径移除（Route Removal）}
+
+随机选取某个时期中的一条完整路径，
+移除该路径上的所有访问。
+该算子的破坏范围介于 D1 和 D4 之间，
+专注于路径结构层面的重组。
+
+\subsection{D6: 生产引导扰动（Production-Guided Perturbation）}
+
+随机选取 $1$ 至 $2$ 个当前有生产活动的时期，
+将其生产标志 $y_t$ 和生产量 $p_t$ 置零，
+同时在相邻时期以一定概率移除部分访问。
+该算子迫使修复阶段重新寻找原料供应与生产分配的平衡，
+是唯一直接作用于生产子结构的破坏算子。
+
+%% ============================================================
+\section{修复算子}
+\label{sec:alns-repair}
+%% ============================================================
+
+\subsection{修复任务的识别}
+
+修复阶段首先识别当前部分解中的两类不可行性来源，
+并将其抽象为待处理的"修复任务"：
+
+\begin{enumerate}
+  \item \textbf{收集点溢出任务：}
+    若收集点 $i$ 在某时期 $t^*$ 发生库存溢出
+    （即 $I_{i,t^*-1} + s_{it^*} > L_i$），
+    则生成一个任务 $(i, t^*)$，要求在 $t^*$ 之前（含 $t^*$）
+    增加对 $i$ 的访问。
+  \item \textbf{原料不足任务：}
+    若累计收集的原料不足以支撑生产下界要求，
+    则生成一个任务，要求在对应时期之前增加原料收集量。
+\end{enumerate}
+
+所有任务按截止期升序排列，确保最紧迫的需求优先满足。
+
+\subsection{R1: 贪心插入修复（Greedy Insertion Repair）}
+
+对任务列表按截止期顺序处理，
+对每个任务枚举所有候选插入位置
+（收集点 $\times$ 时期 $\times$ 路径位置），
+选择总增量成本 $\Delta_{\text{total}}$ 最小的位置执行插入。
+候选过滤条件包括：
+
+\begin{itemize}
+  \item 插入后路径载重不超过 $Q$；
+  \item 时期总载重不超过 $K \cdot Q$；
+  \item 插入后该收集点不在截止期内发生新的溢出。
+\end{itemize}
+
+\subsection{R2: 遗憾值插入修复（Regret Insertion Repair）}
+
+遗憾值插入 \cite{Ropke2006} 旨在避免贪心插入的近视性。
+对每个待处理任务，计算其"遗憾值"——
+最优插入位置与次优插入位置的成本差：
+\begin{equation}
+  \text{regret}(\tau) = \Delta^{(2)}_\tau - \Delta^{(1)}_\tau
+  \label{eq:regret}
+\end{equation}
+其中 $\Delta^{(k)}_\tau$ 表示任务 $\tau$ 的第 $k$ 好插入成本。
+优先处理遗憾值最大的任务——直觉在于，
+遗憾值大的任务若延迟处理，其好位置可能被占据，
+导致后续只能选择代价高得多的位置。
+
+\subsection{R3: 逐期重建修复（Period-by-Period Reconstruction）}
+
+对受破坏影响的时期（包括被 D4 完全清除的时期
+和被其他算子部分移除访问的时期），
+按时间顺序逐期重建：
+
+\begin{enumerate}
+  \item 首先插入截止期约束强制要求的访问（$\mu(i, \text{prev}_i) = t$ 的收集点）；
+  \item 若该期原料收集量不足，贪心添加取货量最大的收集点；
+  \item 使用 Clarke-Wright 节约算法重建该期路径。
+\end{enumerate}
+
+重建完成后，仍可能存在跨期的可行性缺口，
+此时调用贪心插入（R1）进行兜底修复。
+
+\subsection{R4: 生产计划再优化}
+
+每次修复完成后，\textbf{始终}调用第~\ref{sec:alns-initial}~节
+所述的批量生产子问题求解器，
+重新优化生产计划。
+这保证了在路径与库存决策变更后，
+生产计划总是关于当前取货方案的最优解。
+
+%% ============================================================
+\section{局部搜索}
+\label{sec:alns-local-search}
+%% ============================================================
+
+每次修复与生产再优化完成后，
+对当前解执行一轮局部搜索以进一步提升解质量。
+局部搜索分为两个阶段依次执行。
+
+\subsection{跨时期局部搜索}
+
+\textbf{跨期 relocate} 操作尝试将收集点 $i$ 的一次访问
+从时期 $t_1$ 移至时期 $t_2$。
+该操作同时涉及两个时期的路径变更与全局库存的重新计算。
+
+由于跨期移动的精确评价需要调用生产再优化，计算代价较高，
+本文采用"估算-筛选-精算"的三阶段策略：
+
+\begin{enumerate}
+  \item \textbf{估算阶段：}
+    对每个候选移动，基于路径成本变化与库存持有成本变化
+    估算目标函数改善量，同时通过快速的生产可行性检验
+    （基于原料累计量的上下界包络线）过滤显然不可行的移动。
+  \item \textbf{筛选阶段：}
+    按估算改善量排序，仅保留前 $M$ 个候选。
+  \item \textbf{精算阶段：}
+    对筛选通过的候选执行完整的解构造（含生产再优化），
+    接受首个确认改善的移动。
+\end{enumerate}
+
+其中，快速生产可行性检验通过维护一个成品库存的
+可达区间 $[\underline{P}^0_t, \overline{P}^0_t]$ 实现，
+判断条件为：若存在某时期使得 $\underline{P}^0_t > \overline{P}^0_t$，
+则该取货方案必然不可行。
+
+\subsection{期内局部搜索}
+
+对每个时期内的路径执行以下三种经典 VRP 局部搜索算子，
+直到无法继续改善为止：
+
+\begin{enumerate}
+  \item \textbf{2-opt：}
+    对路径中的弧段 $(i, i{+}1, \dots, k, k{+}1)$
+    尝试反转为 $(k, k{-}1, \dots, i{+}1, i)$，
+    若路径成本减少则执行。
+
+  \item \textbf{路径间 relocate：}
+    将一个收集点从路径 $r_1$ 移至路径 $r_2$ 的最优位置，
+    须满足移动后 $r_2$ 的载重不超过 $Q$。
+
+  \item \textbf{路径间 swap：}
+    交换两条路径中各一个收集点的位置，
+    须满足交换后两条路径的载重均不超过 $Q$。
+    对于同一路径内的 swap，无需进行容量检查
+    （因为总载重不变），仅验证路径成本改善。
+\end{enumerate}
+
+%% ============================================================
+\section{ALNS 主循环}
+\label{sec:alns-main-loop}
+%% ============================================================
+
+\subsection{模拟退火接受准则}
+
+采用模拟退火（Simulated Annealing）作为接受准则。
+设当前解的目标函数值为 $Z_{\text{curr}}$，
+候选解为 $Z_{\text{cand}}$，则候选解以如下概率被接受：
+\begin{equation}
+  P(\text{accept}) = \begin{cases}
+    1 & \text{若 } Z_{\text{cand}} \leq Z_{\text{curr}} \\
+    \exp\!\Bigl(-\dfrac{Z_{\text{cand}} - Z_{\text{curr}}}{T}\Bigr)
+      & \text{否则}
+  \end{cases}
+  \label{eq:sa-acceptance}
+\end{equation}
+
+温度 $T$ 按运行时间进度做指数衰减：
+\begin{equation}
+  T = T_0 \cdot \gamma^{\,\text{progress}}
+  \label{eq:temperature}
+\end{equation}
+其中 $\text{progress} = \frac{\text{已用时间}}{\text{总时限}} \in [0,1]$，
+$\gamma$ 为终止温度比率（$\gamma = T_{\text{final}} / T_0$）。
+初始温度设定为：
+\begin{equation}
+  T_0 = \frac{0.05 \cdot Z_{\text{init}}}{\ln 2}
+  \label{eq:initial-temperature}
+\end{equation}
+使得初始状态下目标值恶化 $5\%$ 的解有约 $50\%$ 的接受概率。
+
+使用基于时间而非迭代次数的温度衰减，
+使得在不同规模实例上（单次迭代耗时差异可能很大）
+温度曲线保持一致的搜索行为。
+
+\subsection{自适应权重更新}
+
+每个破坏算子 $d$ 和修复算子 $r$ 分别维护权重 $w_d$ 和 $w_r$。
+算子通过轮盘赌选择：算子 $d$ 被选中的概率为
+$w_d / \sum_{d'} w_{d'}$。
+
+每隔一个 segment（$\eta$ 次迭代），
+根据算子在该 segment 内的表现更新权重。
+算子在每次使用时获得如下得分：
+\begin{equation}
+  \text{score} = \begin{cases}
+    \sigma_1 & \text{若产生新的全局最优解} \\
+    \sigma_2 & \text{若优于当前解（但非全局最优）} \\
+    \sigma_3 & \text{若被接受但劣于当前解} \\
+    0        & \text{若不被接受}
+  \end{cases}
+  \label{eq:alns-score}
+\end{equation}
+
+权重更新公式为：
+\begin{equation}
+  w_d \leftarrow (1 - r) \cdot w_d + r \cdot \frac{\text{Score}_d}{\text{Uses}_d}
+  \label{eq:weight-update}
+\end{equation}
+其中 $r \in (0,1)$ 为反应系数。
+为防止权重趋于零导致某些算子永远不被选中，
+设置下界 $w_{\min} = 10^{-3}$。
+
+\subsection{重启机制}
+
+当搜索陷入停滞时，执行重启（restart）操作。
+停滞的判定采用双重条件：全局最优解连续
+$\theta_{\text{best}}$ 次迭代未改善，
+\textbf{且}当前解连续 $\theta_{\text{curr}}$ 次迭代未改善。
+双重条件的目的是避免在全局最优未更新但当前解仍在有效探索
+（通过接受劣解实现多样化）时过早重启。
+
+重启操作包括：
+\begin{enumerate}
+  \item 将当前解回退为历史全局最优解；
+  \item 在随后的 $\eta$ 次迭代中，
+    使用更大的破坏比例 $\rho_{\text{restart}} > \rho$
+    和更高的温度乘数 $\beta > 1$，
+    以增强搜索多样性。
+\end{enumerate}
+
+\subsection{算法伪代码}
+
+完整的 ALNS 主循环如算法~\ref{alg:alns-main} 所示。
+
+\begin{algorithm}[htbp]
+\caption{ALNS 求解 MVPRP 的主循环}
+\label{alg:alns-main}
+\begin{algorithmic}[1]
+\REQUIRE 问题实例 $\mathcal{I}$，参数集合 $\Theta$
+\ENSURE 最优可行解 $\mathcal{S}^*$
+\STATE $\mathcal{S} \leftarrow \textsc{ConstructInitialSolution}(\mathcal{I})$
+\STATE $\mathcal{S}^* \leftarrow \mathcal{S}$
+\STATE $T_0 \leftarrow 0.05 \cdot Z(\mathcal{S}) / \ln 2$
+\STATE 初始化所有算子权重 $w_d = w_r = 1$
+\STATE $\text{iter} \leftarrow 0$
+\WHILE{未超过时间限制}
+  \STATE $\text{iter} \leftarrow \text{iter} + 1$
+  \IF{满足重启条件}
+    \STATE $\mathcal{S} \leftarrow \mathcal{S}^*$；
+    进入 reheat 模式（增大破坏比例，升高温度乘数）
+  \ENDIF
+  \STATE 以轮盘赌选择破坏算子 $d$ 与修复算子 $r$
+  \STATE $\mathcal{S}' \leftarrow \textsc{Copy}(\mathcal{S})$
+  \STATE $\textsc{Destroy}_d(\mathcal{S}')$
+  \STATE $\textsc{Repair}_r(\mathcal{S}')$
+  \STATE $\textsc{ProductionReoptimize}(\mathcal{S}')$
+  \STATE $\textsc{LocalSearch}(\mathcal{S}')$
+  \IF{$\mathcal{S}'$ 可行}
+    \IF{以模拟退火准则接受 $\mathcal{S}'$}
+      \STATE $\mathcal{S} \leftarrow \mathcal{S}'$
+    \ENDIF
+    \IF{$Z(\mathcal{S}') < Z(\mathcal{S}^*)$}
+      \STATE $\mathcal{S}^* \leftarrow \mathcal{S}'$
+    \ENDIF
+  \ENDIF
+  \STATE 更新算子得分
+  \IF{$\text{iter} \bmod \eta = 0$}
+    \STATE 更新自适应权重
+  \ENDIF
+\ENDWHILE
+\RETURN $\mathcal{S}^*$
+\end{algorithmic}
+\end{algorithm}
+
+%% ============================================================
+\section{参数设置}
+\label{sec:alns-parameters}
+%% ============================================================
+
+表~\ref{tab:alns-params} 汇总了 ALNS 算法的主要参数及其取值。
+
+\begin{table}[htbp]
+\centering
+\caption{ALNS 算法参数设置}
+\label{tab:alns-params}
+\begin{tabular}{llll}
+\toprule
+\textbf{参数} & \textbf{符号} & \textbf{取值} & \textbf{说明} \\
+\midrule
+segment 大小      & $\eta$         & 100   & 权重更新周期 \\
+反应系数          & $r$            & 0.2   & 权重更新的学习率 \\
+最优得分          & $\sigma_1$     & 10    & 产生全局最优解的奖励 \\
+改善得分          & $\sigma_2$     & 5     & 优于当前解的奖励 \\
+接受得分          & $\sigma_3$     & 1     & 接受劣解的奖励 \\
+终止温度比率      & $\gamma$       & $10^{-3}$ & $T_{\text{final}}/T_0$ \\
+最小破坏量        & $d_{\min}$     & 6     & 每次破坏的最少访问数 \\
+破坏比例          & $\rho$         & 0.25  & 常规破坏比例 \\
+重启破坏比例      & $\rho_{\text{restart}}$ & 0.35 & 重启后的增大破坏比例 \\
+重启温度乘数      & $\beta$        & 3.0   & 重启后的温度放大系数 \\
+溢出惩罚因子      & $\alpha$       & 1.5   & D2 中的溢出惩罚 \\
+时间权重          & $\omega$       & 0.6   & D3 中的时间相关度权重 \\
+重启停滞阈值（全局）& $\theta_{\text{best}}$ & $10\eta$ & 全局最优停滞触发 \\
+重启停滞阈值（当前）& $\theta_{\text{curr}}$ & $3\eta$  & 当前解停滞触发 \\
+期内搜索预算      & ---            & 40    & 每轮期内局部搜索的最大移动数 \\
+跨期搜索预算      & ---            & 20    & 每轮跨期局部搜索的最大移动数 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%% ============================================================
+\section{本章小结}
+\label{sec:alns-summary}
+%% ============================================================
+
+本章针对 MVPRP 设计了一种 ALNS 元启发式算法。
+算法的核心设计思路可归纳为以下几点：
+
+\begin{enumerate}
+  \item \textbf{子问题解耦：}
+    通过将生产决策封装为独立的批量优化子问题，
+    ALNS 的邻域搜索仅需关注访问计划与路径，
+    降低了搜索空间的维度。
+
+  \item \textbf{多样化与集中化的平衡：}
+    六种破坏算子从不同维度提供搜索多样性，
+    自适应权重机制动态调整各算子的使用频率，
+    局部搜索则在每次迭代中对当前解进行集中化改善。
+
+  \item \textbf{增量评价驱动效率：}
+    通过对库存成本和路径成本的增量计算，
+    避免了频繁的全量解评价，使单次迭代的计算代价保持在较低水平。
+
+  \item \textbf{双重停滞检测与自适应重启：}
+    重启机制结合增大的破坏范围与升高的温度，
+    有效避免搜索过早收敛到局部最优。
+\end{enumerate}
+
+下一章将在标准测试算例上对比 ALNS 与精确求解器的结果，
+验证算法的有效性和效率。
+
+\end{document}
