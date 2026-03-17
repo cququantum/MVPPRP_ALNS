@@ -59,7 +59,7 @@ public final class BatchOriginAlnsCsvExporter {
             "data/MVPRP/MVPRP4_10_9_2.txt",
             "data/MVPRP/MVPRP4_10_9_3.txt"
     };
-    private static final Path OUTPUT_CSV = Paths.get("10_results_alns_24cases.csv");
+    private static final Path OUTPUT_CSV = Paths.get("15_results_alns_24cases_bak.csv");
 
     private BatchOriginAlnsCsvExporter() {
     }

@@ -9,7 +9,7 @@ import java.util.Locale;
 
 public class Main {
     private enum SolverMode { ORIGINAL, ALNS, COMPARE }
-    private static final String DEFAULT_COMPARE_INSTANCE = "data/MVPRP/MVPRP1_10_3_2.txt";
+    private static final String DEFAULT_COMPARE_INSTANCE = "data/MVPRP/MVPRP1_15_3_2.txt";
 
     public static void main(String[] args) {
         SolverMode solverMode = SolverMode.COMPARE;
@@ -35,7 +35,7 @@ public class Main {
             if (solverMode == SolverMode.COMPARE) {
                 instancePath = DEFAULT_COMPARE_INSTANCE;
             } else {
-                instancePath = "data/MVPRP/MVPRP2_10_3_2.txt";
+                instancePath = "data/MVPRP/MVPRP2_15_3_2.txt";
             }
         }
 
