@@ -23,11 +23,6 @@ import java.util.Set;
 public final class BatchOriginAlnsCsvExporter {
     private enum SolverMode {ORIGINAL, ALNS, COMPARE}
 
-    private static final int[] INSTANCE_FAMILIES = new int[]{1, 2, 3, 4};
-    private static final int[] CUSTOMER_COUNTS = new int[]{10};
-    private static final int[] PERIOD_COUNTS = new int[]{3, 6, 9};
-    private static final int[] VEHICLE_COUNTS = new int[]{2, 3};
-
     private static final int METHODS_PER_INSTANCE = 2;
     private static final double ALNS_TIME_LIMIT_SEC = 60.0;
     private static final String CSV_HEADER =
@@ -38,7 +33,33 @@ public final class BatchOriginAlnsCsvExporter {
             // discard
         }
     };
-    private static final Path OUTPUT_CSV = Paths.get("results_origin_alns_24cases.csv");
+    private static final String[] INSTANCE_PATHS = new String[]{
+            "data/MVPRP/MVPRP1_10_3_2.txt",
+            "data/MVPRP/MVPRP1_10_3_3.txt",
+            "data/MVPRP/MVPRP1_10_6_2.txt",
+            "data/MVPRP/MVPRP1_10_6_3.txt",
+            "data/MVPRP/MVPRP1_10_9_2.txt",
+            "data/MVPRP/MVPRP1_10_9_3.txt",
+            "data/MVPRP/MVPRP2_10_3_2.txt",
+            "data/MVPRP/MVPRP2_10_3_3.txt",
+            "data/MVPRP/MVPRP2_10_6_2.txt",
+            "data/MVPRP/MVPRP2_10_6_3.txt",
+            "data/MVPRP/MVPRP2_10_9_2.txt",
+            "data/MVPRP/MVPRP2_10_9_3.txt",
+            "data/MVPRP/MVPRP3_10_3_2.txt",
+            "data/MVPRP/MVPRP3_10_3_3.txt",
+            "data/MVPRP/MVPRP3_10_6_2.txt",
+            "data/MVPRP/MVPRP3_10_6_3.txt",
+            "data/MVPRP/MVPRP3_10_9_2.txt",
+            "data/MVPRP/MVPRP3_10_9_3.txt",
+            "data/MVPRP/MVPRP4_10_3_2.txt",
+            "data/MVPRP/MVPRP4_10_3_3.txt",
+            "data/MVPRP/MVPRP4_10_6_2.txt",
+            "data/MVPRP/MVPRP4_10_6_3.txt",
+            "data/MVPRP/MVPRP4_10_9_2.txt",
+            "data/MVPRP/MVPRP4_10_9_3.txt"
+    };
+    private static final Path OUTPUT_CSV = Paths.get("10_results_alns_24cases.csv");
 
     private BatchOriginAlnsCsvExporter() {
     }
@@ -53,7 +74,6 @@ public final class BatchOriginAlnsCsvExporter {
             }
         }
 
-        String[] instancePaths = buildInstancePaths();
         Set<String> completedKeys = new HashSet<String>();
         ensureOutputFile(completedKeys);
 
@@ -62,10 +82,10 @@ public final class BatchOriginAlnsCsvExporter {
                 StandardCharsets.UTF_8,
                 StandardOpenOption.APPEND
         )) {
-            int totalRows = instancePaths.length * methodsPerInstance(solverMode);
+            int totalRows = INSTANCE_PATHS.length * methodsPerInstance(solverMode);
             int progress = countCompletedRows(completedKeys, solverMode);
 
-            for (String instancePath : instancePaths) {
+            for (String instancePath : INSTANCE_PATHS) {
                 String instanceName = instanceName(instancePath);
                 final Instance ins = loadInstance(instancePath);
 
@@ -141,31 +161,6 @@ public final class BatchOriginAlnsCsvExporter {
             }
         }
         return count;
-    }
-
-    private static String[] buildInstancePaths() {
-        ArrayList<String> paths = new ArrayList<String>();
-        for (int family : INSTANCE_FAMILIES) {
-            for (int customerCount : CUSTOMER_COUNTS) {
-                for (int periodCount : PERIOD_COUNTS) {
-                    for (int vehicleCount : VEHICLE_COUNTS) {
-                        String path = String.format(
-                                Locale.US,
-                                "data/MVPRP/MVPRP%d_%d_%d_%d.txt",
-                                family,
-                                customerCount,
-                                periodCount,
-                                vehicleCount
-                        );
-                        if (!Files.exists(Paths.get(path))) {
-                            throw new IllegalStateException("Instance file not found: " + path);
-                        }
-                        paths.add(path);
-                    }
-                }
-            }
-        }
-        return paths.toArray(new String[0]);
     }
 
     private static Instance loadInstance(String instancePath) throws IOException {

@@ -62,7 +62,7 @@ public final class AlnsConfig {
 
     public static AlnsConfig defaults() {
         return new AlnsConfig(
-                20260310L,
+                42L,
                 60.0,
                 100,
                 0.2,
